@@ -6,11 +6,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreClienteRequest;
 use App\Models\Cliente;
+use App\Services\ClienteService;
 use Illuminate\Http\Request;
 
 class ClienteController extends Controller
 {
+    public function __construct(private ClienteService $clienteService) {}
+
     public function index(Request $request)
     {
         $clientes = Cliente::when($request->buscar, function ($q, $buscar) {
@@ -29,19 +33,10 @@ class ClienteController extends Controller
         return view('clientes.create');
     }
 
-    public function store(Request $request)
+    public function store(StoreClienteRequest $request)
     {
-        $request->validate([
-            'tipo_documento'    => 'required|in:DNI,RUC,CE,PASAPORTE',
-            'numero_documento'  => 'required|string|unique:clientes',
-            'nombre_completo'   => 'required|string|max:200',
-            'email'             => 'nullable|email',
-            'telefono_whatsapp' => 'nullable|string|max:20',
-        ]);
+        $cliente = $this->clienteService->crear($request->validated());
 
-        $cliente = Cliente::create($request->all());
-
-        // Si viene de un modal AJAX devuelve JSON
         if ($request->expectsJson()) {
             return response()->json(['cliente' => $cliente]);
         }
@@ -52,7 +47,8 @@ class ClienteController extends Controller
 
     public function show(Cliente $cliente)
     {
-        $cliente->load(['reservas.fechaTour.tour', 'reservas.estado']);
+        $cliente = $this->clienteService->cargarDetalle($cliente);
+
         return view('clientes.show', compact('cliente'));
     }
 
@@ -69,22 +65,23 @@ class ClienteController extends Controller
             'telefono_whatsapp' => 'nullable|string|max:20',
         ]);
 
-        $cliente->update($request->all());
+        $this->clienteService->actualizar($cliente, $request->validated());
 
         return redirect()->route('clientes.show', $cliente)
             ->with('success', 'Cliente actualizado.');
     }
 
-    // AJAX: busca cliente por DNI o RUC antes de crearlo
-    // En el futuro conectar con SUNAT/RENIEC aquí
+    /**
+     * AJAX: busca en BD local primero, si no consulta RENIEC.
+     * Usado en el formulario de nueva reserva para autocompletar.
+     */
     public function buscarDocumento(Request $request)
     {
-        $cliente = Cliente::where('numero_documento', $request->numero)->first();
+        $resultado = $this->clienteService->buscarOConsultarDocumento(
+            $request->numero,
+            $request->tipo ?? 'DNI'
+        );
 
-        if ($cliente) {
-            return response()->json(['encontrado' => true, 'cliente' => $cliente]);
-        }
-
-        return response()->json(['encontrado' => false]);
+        return response()->json($resultado);
     }
 }
